@@ -101,7 +101,7 @@ Citation: [<https://www.kaggle.com/c/pubg-finish-placement-prediction/data>]
 
 -   **winPlacePerc** - The target of prediction. This is a percentile winning placement, where 1 corresponds to 1st place, and 0 corresponds to last place in the match. It is calculated off of maxPlace, not numGroups, so it is possible to have missing chunks in a match.
 
-## 1.3: Summary of Analysis Goals
+## 1.3: Goals
 
 The general goals of the analysis are as follows:
 
@@ -815,4 +815,33 @@ final_rmse * winPlacePerc_sd
 
 # Section 4: Conclusion
 
-In this report, we have delivered on the
+## 4.1: Summary of Goals
+
+In this report, we have delivered on the following goals:
+
+1.  Conduct visual analysis on a subset of the PUBG dataset
+
+2.  Conduct a variety of regression models on this data, record metrics
+
+3.  Analyze the accuracy of predictions, and which variables are important
+
+4.  Try and identify data with the following strategies:
+
+    1.  Hiding until the end of the game
+
+    2.  Being aggressive to survive till the end of the game.
+
+We achieved a final RMSE of:
+
+```{r}
+# Un-normalized final RMSE from neural network v2:
+final_rmse * winPlacePerc_sd
+```
+
+We also concluded that deep neural networks were superior for this regression task compared to linear models and principal component analysis.
+
+## 4.2: Limitations
+
+This code is not ideal since it combines several different models in one script. Ideally, one should run different models in different scripts, since the RAM usage and sheer number of libraries needed can take a toll on less powerful machines. Additionally, this code runs much faster with an NVIDIA GPU with the CUDA libraries installed and set up. This shows how CPU machine learning is dwarfed compared to GPU learning, and highlights how further development would require ample GPU computational power.
+
+This code is not an optimal solution to this regression problem. Kaggle competitors have achieved very low RMSES (around 0.01) when using the entire dataset and much more nuanced, carefully constructed models. This system, if employed in a production environment, would give a reasonable estimate of a player's chances of survival, but would often be off by a quarter of the total player count or more, reducing practicality. Future approaches would factor in game type, player id, the player's frequently-played-with friends, etc. to achieve a better prediction model.
