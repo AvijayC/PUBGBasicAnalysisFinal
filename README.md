@@ -1,6 +1,6 @@
 # IMPORTANT INFO:
 
-## When running the code for the first time, the code will install the required packages, then restart the R session. (I can't control this). 
+## When running the code for the first time, the code will install the required packages, then restart the R session **if you don't have the keras package already installed** (I can't control this). 
 ## Please RE-RUN THE CODE a second time after running it the first time (if you don't already have keras installed on your computer).
 
 ## This code will automatically install a lot of packages and external tools. (tensorflow, keras, miniconda, python 3.6, and more). 
