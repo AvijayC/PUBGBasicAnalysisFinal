@@ -1,0 +1,818 @@
+---
+title: "Videogame Player Rank Prediction"
+subtitle: "An Exploration Of The Popular Game PlayerUnknown's Battlegrounds"
+author: "Avijay Chakravorti - HarvardX Capstone Project"
+date: "9/5/2021"
+output: 
+  pdf_document:
+    toc: true
+---
+
+```{r setup, include = FALSE, echo = FALSE}
+#knitr::opts_chunk$set(include = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80), tidy=TRUE)
+source("PUBGAnalysisScript.R", echo=TRUE) # Execute R Script to get variables.
+```
+
+# Section 1: Introduction
+
+## 1.1: Topic Introduction / Context of PUBG
+
+PlayerUnknown's Battlegrounds (known as PUBG) is a popular battle-royale first / third person shooter video game. The game places up to 103 players in a single match, where players can be in teams of 2, 4, or alone depending on the selected gametype. Players skydive from an airplane flying over a large swath of land to "drop" into varied locations. The aim of the game is to obtain medical supplies, weapons, and armor and fight other teams in a last-team or last-person-standing battle. The playable area grows smaller and smaller, with a shrinking circular boundary causing damage to players that remain outside it.
+
+Common strategies are to be aggressive, using superior aim and positioning to take down other players and obtain a lot of high-level loot. Another common strategy is to avoid detection and hide as much as possible to outlast players seeking frequent combat.
+
+Approximately 3 years ago, a data science challenge was posted on Kaggle with the title "PUBG Finish Placement Prediction (Kernels Only)". This challenge posted a test and train dataset, with each row consisting of 1 player's end-of-match statistics for a particular match in the game. The aim of the challenge was to predict a player's relative standing in a game, given various features like damage dealt, healing items used, etc. We will be using only the training set provided (as the test set doesn't have the actual player ranks to verify against), and will be subsetting out this training set for **solo first-person gamemodes only.** This means games with teammates, and/or games with third-person perspective will be eliminated and not be considered in this analysis. This is to stay within RAM limitations of the PC processing this data.
+
+## 1.2: Dataset Description
+
+The original dataset has the following dimensions:
+
+```{r}
+nrow(train_V2)
+ncol(train_V2)
+```
+
+### 1.2.1: Description of Features from Kaggle
+
+The description of the dataset is directly from Kaggle.\
+Citation: [<https://www.kaggle.com/c/pubg-finish-placement-prediction/data>]
+
+"PUBG Finish Placement Prediction (Kernels Only)." *Kaggle*, Kaggle Playground Code Competition, 2018, www.kaggle.com/c/pubg-finish-placement-prediction/data.
+
+[List of features:]{.ul}
+
+-   **DBNOs** - Number of enemy players knocked.
+
+-   **assists** - Number of enemy players this player damaged that were killed by teammates.
+
+-   **boosts** - Number of boost items used.
+
+-   **damageDealt** - Total damage dealt. Note: Self inflicted damage is subtracted.
+
+-   **headshotKills** - Number of enemy players killed with headshots.
+
+-   **heals** - Number of healing items used.
+
+-   **Id** - Player's Id
+
+-   **killPlace** - Ranking in match of number of enemy players killed.
+
+-   **killPoints** - Kills-based external ranking of player. (Think of this as an Elo ranking where only kills matter.) If there is a value other than -1 in rankPoints, then any 0 in killPoints should be treated as a "None".
+
+-   **killStreaks** - Max number of enemy players killed in a short amount of time.
+
+-   **kills** - Number of enemy players killed.
+
+-   **longestKill** - Longest distance between player and player killed at time of death. This may be misleading, as downing a player and driving away may lead to a large longestKill stat.
+
+-   **matchDuration** - Duration of match in seconds.
+
+-   **matchId** - ID to identify match. There are no matches that are in both the training and testing set.
+
+-   **matchType** - String identifying the game mode that the data comes from. The standard modes are "solo", "duo", "squad", "solo-fpp", "duo-fpp", and "squad-fpp"; other modes are from events or custom matches.
+
+-   **rankPoints** - Elo-like ranking of player. This ranking is inconsistent and is being deprecated in the API's next version, so use with caution. Value of -1 takes place of "None".
+
+-   **revives** - Number of times this player revived teammates.
+
+-   **rideDistance** - Total distance traveled in vehicles measured in meters.
+
+-   **roadKills** - Number of kills while in a vehicle.
+
+-   **swimDistance** - Total distance traveled by swimming measured in meters.
+
+-   **teamKills** - Number of times this player killed a teammate.
+
+-   **vehicleDestroys** - Number of vehicles destroyed.
+
+-   **walkDistance** - Total distance traveled on foot measured in meters.
+
+-   **weaponsAcquired** - Number of weapons picked up.
+
+-   **winPoints** - Win-based external ranking of player. (Think of this as an Elo ranking where only winning matters.) If there is a value other than -1 in rankPoints, then any 0 in winPoints should be treated as a "None".
+
+-   **groupId** - ID to identify a group within a match. If the same group of players plays in different matches, they will have a different groupId each time.
+
+-   **numGroups** - Number of groups we have data for in the match.
+
+-   **maxPlace** - Worst placement we have data for in the match. This may not match with numGroups, as sometimes the data skips over placements.
+
+-   **winPlacePerc** - The target of prediction. This is a percentile winning placement, where 1 corresponds to 1st place, and 0 corresponds to last place in the match. It is calculated off of maxPlace, not numGroups, so it is possible to have missing chunks in a match.
+
+## 1.3: Summary of Analysis Goals
+
+The general goals of the analysis are as follows:
+
+1.  Trim the original dataset and keep relevant columns only, to facilitate computing within RAM limitations
+
+2.  Conduct surface-level visual analysis on data
+
+3.  Normalize data and split into train / test / validation sets
+
+4.  Conduct a variety of regression models on this data, record metrics
+
+5.  Analyze the accuracy of predictions, and which variables are important
+
+6.  Try and identify data with the following strategies:
+
+    1.  Hiding until the end of the game
+
+    2.  Being aggressive to survive till the end of the game.
+
+# Section 2: Methods / Analysis
+
+## 2.1: Import
+
+Data was loaded from a CSV file available here: <https://www.kaggle.com/c/pubg-finish-placement-prediction/data>
+
+We look at only the **train.csv** file. The test csv is discarded.
+
+We import the file letting R determine all data types, but convert one of the columns to a factor:
+
+``` {.R tidy.opts="list(width.cutoff"}
+train_V2 <- read_csv("data/train_V2.csv", 
+                     col_types = cols(matchType = col_factor(levels = c("solo", 
+                                                                        "duo", "squad",
+                                                                        "solo-fpp",
+                                                                        "duo-fpp", 
+                                                                        "squad-fpp"))))
+train_V2 <- as_tibble(train_V2)
+
+colnames(train_V2)
+nrow(train_V2)
+ncol(train_V2)
+```
+
+## 2.2: Trimming, Splitting and Normalizing Dataset
+
+### 2.2.1: Trimming Irrelevant Columns
+
+We trim the dataset down to the single gamemode we chose (solo-fpp) and remove some player identification and game identification columns that won't be used in our models.
+
+``` {.R .E}
+# We will delete the groupId and matchId columns, to align with our row-by-row approach.
+train_V2 <- train_V2[complete.cases(train_V2),] # Remove all rows with NAs
+train_V2 <- na.omit(train_V2)
+train_V2 <- train_V2 %>% select(-Id, -matchId, -groupId)
+colnames(train_V2)
+# We will attempt modeling without looking at individual player IDs. We want to focus on
+# predicting a win proportion for all players, not individual players.
+
+# Create a small subset of this data to use with simpler R-based ML methods.
+# We will only look at solo-fpp games.
+small_data <- train_V2 %>% filter(matchType == "solo-fpp")
+nrow(small_data)
+
+# Select only columns of interest to ease processing
+small_data <- small_data %>% select(-DBNOs, -revives, -teamKills, -matchType)
+# Filter out NAs
+small_data <- small_data[complete.cases(small_data),] # Remove all rows with NAs
+colnames(small_data)
+```
+
+We eliminate the following columns for the following reasons:
+
+-   DBNOs: 0 for all rows of our selected gamemode. Throws NA errors later
+
+-   Revives: irrelevant in solo gamemode
+
+-   teamKills: irrelevant in solo gamemode
+
+-   matchType: already filtered for and known
+
+-   Id, matchId, groupId: not relevant for regression analysis, since it's team-based data and character-type data.
+
+The new dataset has the following dimensions and columns:
+
+```{r echo=TRUE}
+dim(small_data)
+cat("\n")
+colnames(small_data)
+```
+
+### 2.2.2: Train / Test / Validation Split
+
+We split according to the following proportions:
+
+-   Small_data dataframe split into:
+
+    -   train_all dataframe: p = 0.85 split into:
+
+        -   train dataframe: p = 0.80
+
+        -   test dataframe: p = 0.20
+
+    -   val dataframe: p = 0.15
+
+``` {.R}
+## === TRAIN TEST VAL SPLIT ===
+##=============================
+
+# Validation - trainall split from small_data. Val is 15% of small_data
+small_val_idx <- createDataPartition(small_data$winPlacePerc, times = 1, p = 0.15, 
+                                     list = FALSE)
+small_val_set <- small_data[small_val_idx, ]
+small_trainall_set <- small_data[-small_val_idx, ]
+
+# Train - test split from trainall. Test is 20% of trainall.
+small_test_idx <- createDataPartition(small_trainall_set$winPlacePerc, times = 1, p = 0.20, 
+                                      list = FALSE)
+small_test_set <- small_trainall_set[small_test_idx, ]
+small_train_set <- small_trainall_set[-small_test_idx, ]
+
+# Seeing lengths of all sets
+nrow(small_val_set)
+nrow(small_test_set)
+nrow(small_train_set)
+
+rm(small_trainall_set)
+rm(small_data)
+gc()
+```
+
+### 2.2.3: Normalization
+
+We now normalize the train, test and validation sets using the column means and column standard deviations from the train set only. This ensures that we only use training-set-related data to predict our results.
+
+The formula for normalization is as follows:
+
+$$
+\text{Normalized } x = \frac{x - \mu}{\sigma}
+$$
+
+The formula for reversing this (un-normalizing) is as follows
+
+$$
+x = (\text{Normalized } x) \cdot \sigma + \mu
+$$
+
+The code to normalize our filtered data is as follows:
+
+``` {.R}
+## ==================================
+## Normalization
+## ==================================
+# Acquire means and stds of train set columns.
+train_means <- colMeans(small_train_set)
+train_sds <- colSds(as.matrix(small_train_set))
+
+# Normalize train, test, val set using train means and sds
+small_train_set <- as_tibble(scale(small_train_set, center = train_means, scale = train_sds))
+small_test_set <- as_tibble(scale(small_test_set, center = train_means, scale = train_sds))
+small_val_set <- as_tibble(scale(small_val_set, center = train_means, scale = train_sds))
+```
+
+### 2.2.4: Splitting Train / Test / Val Into X and Y
+
+We further split each of the 3 sets into their X and Y components. The Y component is the column "winPlacePerc".
+
+``` {.R}
+# Assign x and y for each dataset
+# Splitting into x and y in case needed
+small_train_x <- as.matrix(small_train_set %>% select(-winPlacePerc))
+small_test_x <- as.matrix(small_test_set %>% select(-winPlacePerc))
+small_val_x <- as.matrix(small_val_set %>% select(-winPlacePerc))
+
+small_train_y <- as.matrix(small_train_set %>% select(winPlacePerc))
+small_test_y <- as.matrix(small_test_set %>% select(winPlacePerc))
+small_val_y <- as.matrix(small_val_set %>% select(winPlacePerc))
+```
+
+This is to permit easy prediction generation later, without having to specify the columns we need every time.
+
+## 2.3: Data Insights (non-normalized data)
+
+### 2.3.1: Correlations
+
+Let's see how the features are correlated using a correlation plot. Bigger circles mean higher magnitude of correlation. Red means negative correlation, blue means positive correlation.
+
+```{r}
+# Get correlation matrix and plot
+small_cormat <- cor(small_data)
+corrplot::corrplot(small_cormat)
+```
+
+### 2.3.2: Plots Relating to winPlacePerc
+
+We will look at a random sample of 40000 points from the data. This is to ensure our computer isn't overloaded.
+
+```{r}
+plot_sample_size <- 40000
+```
+
+Let's look at the distribution of our y class, winPlacePerc.
+
+```{r}
+
+```
+
+Let's look at the most correlated features for predicting a player's winPlacePerc. We will color the points by how many kills that player obtained.
+
+```{r}
+# Plot boosts vs. winPlacePerc
+small_data %>% sample_n(plot_sample_size) %>%
+  ggplot(aes(boosts, winPlacePerc)) + geom_point(aes(color = kills)) + 
+  ggtitle("winPlacePerc vs. Boosts Used")
+```
+
+```{r}
+# Histogram of boosts
+small_data %>% sample_n(plot_sample_size) %>% 
+  ggplot(aes(boosts)) + geom_histogram() + ggtitle("Distribution of Boosts")
+```
+
+We see player usually achieve more kills with higher boost usage. Let's look at this again, but replace boosts with healing items.
+
+```{r}
+# Plot heals vs. winPlacePerc
+small_data %>% sample_n(plot_sample_size) %>%
+  ggplot(aes(heals, winPlacePerc)) + geom_point(aes(color = kills)) + 
+  ggtitle("winPlacePerc vs Heals Used")
+```
+
+```{r}
+# Histogram of heals
+small_data %>% sample_n(plot_sample_size) %>% 
+  ggplot(aes(heals)) + geom_histogram() + ggtitle("Distribution of Heals")
+```
+
+We see that players using more than \~ 1 heal are more likely to get more than 0 kills. Interestingly, using an extremely high number of heals does not seem to correlate into higher kills. This suggests that players who use more boosts are more likely to get kills, since boosts improve a player's combat effectiveness.
+
+However, higher heal usage correlates with better survival odds, since winPlacePerc increases as heals increase. This suggests there are 2 avenues by which a player can reach a better placement in the match: boosts to help eliminate competition, or simply outlasting enemy players with constant healing.
+
+Players who outlast more enemies seem to use more heals than boosts. Usage of boosts among the highest ranked players seems to be limited to \~ 7 boosts per match. Heals seem to be limited to \~ 13 per match.
+
+Let's see if players that move around a lot (large walkDistance) survive longer.
+
+```{r}
+# Plot winPlacePerc vs. walkDistance
+small_data %>% sample_n(plot_sample_size) %>%
+  ggplot(aes(walkDistance, winPlacePerc)) + geom_point(aes(color = kills)) + 
+  ggtitle("winPlacePerc vs WalkDistance")
+```
+
+We see that players walking more fare better than players who walk less. It's clear that one has to walk at least 1000 meters to have a significant chance of being the last player standing, meaning one must search many places to acquire items instead of hiding in one spot.
+
+Let's see how walking distance translates to kills, and where those players rank by the end of the match.
+
+```{r}
+# Plot kills vs. walkDistance
+small_data %>% sample_n(plot_sample_size) %>%
+  ggplot(aes(walkDistance, kills)) + geom_point(aes(color = winPlacePerc)) + 
+  ggtitle("Kills vs WalkDistance")
+```
+
+We see the following trends:
+
+-   Players who walk a lot without getting kills (hiding strategy) can achieve a high winPlacePerc, but they need to walk more than \~ 1500 meters. (**Hide and evade strategy)**
+
+-   Players who walk less are much less likely to have a high winPlacePerc. Ifget lots of kills, they need to walk less than people who get 0 kills to achieve a large winPlacePerc. **(Aggressive strategy)**
+
+The optimal statistics for winning seem to be \~ 4000 meters of walking and more than 6 kills.
+
+We also notice that practically no players stand in the same spot after getting more than \~ 6 kills, indicating mobility is mandatory to achieve a high kill count. This also shows that initial fights (right after people first land on the map) rarely result in more than 5 kills before players relocate to a new area.
+
+Let's see how much players use vehicles vs. how much players walk, and how well those players place.
+
+```{r}
+# Plot winPlacePerc vs. walkDistance
+small_data %>% sample_n(plot_sample_size) %>%
+  ggplot(aes(rideDistance, walkDistance)) + geom_point(aes(color = winPlacePerc)) + 
+  ggtitle("rideDistance vs. walkDistance")
+```
+
+Players who walk or drive more are more likely to win. Players who only use vehicles are less likely to win than players who only walk, most likely since vehicles make noise and attract enemies.
+
+### 2.3.3: Plots Relating to Player Movement / Looting
+
+Let's look at what statistics are correlated with having lots of good loot. The correlation plot highlighted that walkDistance and kills were good indicators of how many healing items a player is able to use (and acquire).
+
+```{r}
+# Plot walkDistance vs. rideDistance, color coding by heals used.
+small_data %>% sample_n(plot_sample_size) %>%
+  ggplot(aes(walkDistance, rideDistance)) + geom_point(aes(color = heals)) + 
+  ggtitle("rideDistance vs. walkDistance, colored by heals") + 
+  scale_color_gradientn(colors = c("black", "aquamarine3", "aquamarine2",
+                                   "aquamarine1", "aquamarine1", "aquamarine1",
+                                   "darkolivegreen2", "chartreuse"))
+```
+
+After walking approximately 1000 meters or driving approximately 4000 meters, it's very likely a player has used at least 3 healing items. Driving players seem less likely to use healing items compared to walking players travelling the same distance.
+
+Let's do the same for boosts:
+
+```{r}
+# Plot walkDistance vs. rideDistance, color coding by boosts used.
+small_data %>% sample_n(plot_sample_size) %>%
+  ggplot(aes(walkDistance, rideDistance)) + geom_point(aes(color = boosts)) + 
+  ggtitle("rideDistance vs. walkDistance, colored by boosts") + 
+  scale_color_gradientn(colors = c("black", "aquamarine3", "aquamarine2",
+                                   "aquamarine1", "aquamarine1", "aquamarine1",
+                                   "darkolivegreen2", "chartreuse"))
+```
+
+We observe the same thing: players who almost exclusively drive are less likely to use boosts than players who walk the same distance.
+
+## 2.4: Required Packages, Hardware and Software
+
+This code was run on the following hardware:
+
+-   Intel i7-6700HQ 4-core 8-thread 3.1GHz processor
+-   NVIDIA GTX 1070 GPU (speeds up neural net training dramatically)
+-   32GB DDR3 RAM (less than 8 GB used)
+
+The graphics card is important because the provided code **uses tensorflow and keras.** This is an advanced machine learning package that can use NVIDIA GPUs to dramatically speed up machine learning.
+
+The following external software and hardware is strongly recommended, but not required (code will run very slow if re-training models):
+
+-   NVIDIA CUDA drivers
+-   GPU-enabled tensorflow installation with CUDA drivers set up correctly
+-   An NVIDIA GPU
+
+The following packages are needed (fully installed and set up):
+
+-   library(readr)
+-   library(caret)
+-   library(keras)
+-   library(matrixStats)
+-   library(dplyr)
+-   library(tidyr)
+-   library(tidyverse)
+
+## 2.5: Models (using normalized data)
+
+Our metric of evaluation will be **root mean squared error.**
+
+$$
+ RMSE = \sqrt{\frac{1}{N} \cdot \sum_{i=1}^{n}(y_{i} - x_{i})^{2}}
+$$
+
+Loss functions will be different for the Keras neural network models (MSE), but we will compare the final versions of each model using RMSE.
+
+### 2.4.1: Baseline Average-Predicting Model
+
+This model will predict the average winPlacePerc in the training set for every single player.
+
+``` {.R}
+# Let's see what predicting the average does.
+
+pred_avg <- matrix(mean(small_train_y), nrow = nrow(small_test_y), ncol = 1)
+rmse_avg <- RMSE(pred_avg, small_test_y)
+rmse_avg
+```
+
+The average winPlacePerc is:
+
+```{r}
+# Converting normalized winPlacePerc back into original scale:
+mean(small_train_y) * winPlacePerc_sd + winPlacePerc_mean
+```
+
+We get an un-normalized RMSE of:
+
+```{r}
+# Scaling RMSE back to original scale. (un-normalizing)
+rmse_avg * winPlacePerc_sd
+```
+
+We're off by about 30% on our predictions using this naive model.
+
+### 2.4.2: Linear Model (caret package)
+
+Next, we'll run a simple linear model with every feature used to predict winPlacePerc as seen here:
+
+``` {.R}
+# Train a linear model using every variable to predict winPlacePerc column.
+m_lm1 <- train(winPlacePerc ~ ., method = "lm", data = small_train_set)
+summary(m_lm1)
+
+# Make predictions
+pred_lm1 <- predict(m_lm1, small_test_set)
+
+# Plot predictions vs actual and calculate RMSE
+plot(pred_lm1, small_test_y, xlab = "Predicted Normalized Rank", 
+     ylab = "Actual Normalized Rank") + title("LinearModel Actual vs. Predicted")
+rmse_lm1 <- RMSE(pred_lm1, small_test_y)
+rmse_lm1
+
+# We see a simple linear model gets us, on average, within 10% of the 
+# actual win place percentage.
+```
+
+We look at the variable importance determined by the linear model using this code:
+
+```{r}
+plot(varImp(m_lm1), title="Linear Model Variable Importance")
+```
+
+We generate predictions and get the un-normalized RMSE of:
+
+```{r}
+# Un-normalizing RMSE by multiplying by winPlacePerc standard deviation.
+rmse_lm1 * winPlacePerc_sd
+```
+
+We're about 9-10% off on average for every prediction.
+
+### 2.4.3: Principal Component Analysis (PCA) Model
+
+We run principal component analysis to determine which features are most important in explaining changes in a player's predicted winPlacePerc, and to reduce the dimensionality (number of features) of the training data to simplify learning and analysis. We run the following PCA model:
+
+``` {.R}
+# Train pca model
+m_pca <- train(winPlacePerc ~ ., method = "pcr", data = small_train_set)
+summary(m_pca)
+
+# Make predictions
+pred_pca <- predict(m_pca, small_test_set)
+
+# Plot predictions vs actual / calculate rmse
+plot(pred_pca, small_test_y, xlab = "Predicted Normalized Rank", 
+     ylab = "Actual Normalized Rank") +  title("PCA Model Actual vs. Predicted")
+rmse_pca <- RMSE(pred_pca, small_test_y)
+rmse_pca
+
+# This is worse than the linear model. It seems to almost never over-predict someone's 
+# relative rank, but often underpredicts it.
+```
+
+We get the following dimensionality reduction from PCA:
+
+```{r}
+summary(m_pca)
+```
+
+We get the following un-normalized PCA RMSE:
+
+```{r}
+# Un-normalizing RMSE by multiplying by winPlacePerc standard deviation.
+rmse_pca * winPlacePerc_sd
+```
+
+We're off by \~ 20 % on average.
+
+### 2.4.4: Keras Neural Network V1 - Large Network, Large Batch Size
+
+Neural networks are powerful tools that can learn complex patterns and functions when fed a large amount of data. We create and train the network using the following code:
+
+``` {.R}
+# Now we're going to use tensorflow deep neural nets to achieve hopefully more 
+# specific results.
+
+# Constructing a deep neural network with 5 layers.
+# - Layers 1-4: 512-unit fully connected layers
+# - Layer 5: Output layer, 1 node, outputs a single number per input row.
+m_dnn1 <- keras_model_sequential() %>%
+  layer_dense(units = 512, activation = 'relu', input_shape = ncol(small_train_x)) %>%
+  layer_dense(units = 512, activation = 'relu') %>%
+  layer_dense(units = 512, activation = 'relu') %>%
+  layer_dense(units = 512, activation = 'relu') %>%
+  layer_dense(units = ncol(small_train_y), activation = "linear")
+m_dnn1
+
+# Compile the model
+compile(m_dnn1, loss = "mse" , optimizer = "adam", 
+        metrics = list("mse"))
+
+# Train the model, record history of training
+history_dnn1 <- fit(m_dnn1, small_train_x, small_train_y, epochs = 30, batch_size = 8192, 
+                    validation_data = list(small_test_x, small_test_y))
+
+# Make predictions
+pred_dnn1 <- m_dnn1 %>% predict(small_test_x)
+
+# Plot predictions / calculate RMSE
+plot(pred_dnn1, small_test_y, xlab = "Predicted Normalized Rank", 
+     ylab = "Actual Normalized Rank") +  title("DNN1 Model Actual vs. Predicted")
+rmse_dnn1 <- RMSE(pred_dnn1, small_test_y)
+rmse_dnn1
+```
+
+This neural network is structured with the following layer architecture.
+
+```{r warning=FALSE}
+m_dnn1
+```
+
+There are 4 layers of 512 nodes each, with each layer's node connected to every other node in the previous and next layers. The final layer, having 1 node, gives us a number which we interpret as the normalized prediction for winPlacePerc.
+
+This model uses Mean Squared Error as a loss function. We will be using the test set to benchmark how well the model performs during training (**val_loss and val_mse are actually test_loss and test_mse).**
+
+This model tries to use a large, complicated neural network (which should predict the training data better and learn more complicated, nuanced ways to predict winPlacePerc). We also train the model using 8192 observations at a time, which makes the MSE decrease more smoothly (since increased batch size means a smaller proportion of outlier observations).
+
+We make this model go through the entire training set 30 times (30 epochs).
+
+The un-normalized RMSE we get is:
+
+```{r}
+# Multiply by winPlacePerc standard deviation to un-normalize RMSE
+rmse_dnn1 * winPlacePerc_sd
+```
+
+On average, we're off by around 6-7%. We get much better results than PCA or the linear model.
+
+### 2.4.5: Keras Neural Network V2 - Smaller Network, Small Batch Size
+
+We try another neural network with a different style - using less-complicated 128-node layers instead of 512-node ones. We also only pass 128 observations at a time. We define and train the model using the following code:
+
+``` {.R}
+# New DNN, less complex, lower batch size
+layersize_dnn2 <- 128
+
+# Constructing a deep neural network with 5 layers.
+# - Layers 1-4: layersize_dnn2-unit fully connected layers
+# - Layer 5: Output layer, 1 node, outputs a single number per input row.
+m_dnn2 <- keras_model_sequential() %>%
+  layer_dense(units = layersize_dnn2, activation = 'relu', 
+              input_shape = ncol(small_train_x)) %>%
+  layer_dense(units = layersize_dnn2, activation = 'relu') %>%
+  layer_dense(units = layersize_dnn2, activation = 'relu') %>%
+  layer_dense(units = layersize_dnn2, activation = 'relu') %>%
+#              kernel_regularizer = regularizer_l2(0.01), 
+#              bias_regularizer = regularizer_l2(0.01))     %>%
+  layer_dense(units = ncol(small_test_y), activation = "linear")
+  
+m_dnn2
+
+# Compiling the model
+compile(m_dnn2, loss = "mse" , optimizer = "adam", 
+        metrics = list("mse"))
+
+# Training the model, storing history as training progresses.
+history_dnn2 <- fit(m_dnn2, small_train_x, small_train_y, epochs = 18, batch_size = 128, 
+                    validation_data = list(small_test_x, small_test_y) )
+
+# Make predictions
+pred_dnn2 <- m_dnn2 %>% predict(small_test_x)
+
+# Plot predictions / calculate RMSE
+plot(pred_dnn2, small_test_y, xlab = "Predicted Normalized Rank", 
+     ylab = "Actual Normalized Rank") +  title("dnn2 Model Actual vs. Predicted")
+rmse_dnn2 <- RMSE(pred_dnn2, small_test_y)
+rmse_dnn2
+```
+
+Here's a summary of the architecture:
+
+```{r}
+summary(m_dnn2)
+```
+
+This model is the same as the previous model (V1), except that each 512-node layer is converted to a 128-node layer. This reduces the number of parameters the model has to train drastically (from 799745 to 52481) which makes training faster and reduces the amount of GPU memory used. However, since our batch size is smaller, the model has to conduct more training iterations to get through the entire training dataset.
+
+While this model itself is less complicated compared to V1, the computer must train it many more times since our batch size is smaller. We also will see more unstable / spiky loss graphs since our model can have a high proportion of outliers per batch (due to smaller batch size). This makes learning more unstable / less smooth, but also allows the model to not get stuck at a particular configuration and helps the model understand variations in how the data predicts winPlacePerc.
+
+We make this model go through our entire training set 18 times (18 epochs).
+
+We get the following un-normalized RMSE:
+
+```{r}
+# Multiply by winPlacePerc standard deviation to un-normalize RMSE
+rmse_dnn2 * winPlacePerc_sd
+```
+
+We get comparable results to Neural Network V1, and much better results than both PCA and linear models.
+
+### 2.4.6: Ensemble of Neural Network V2 and Linear Model
+
+Perhaps combining our decent linear model and much more accurate neural network v2 model will result in better predictions? We use this code to generate predictions using that method:
+
+``` {.R}
+# Join both prediction vectors, take row-wise average.
+pred_lm_dnn_ensemble <- rowMeans(cbind(pred_lm1, pred_dnn2))
+
+# Plot prediction and calc rmse
+plot(pred_lm_dnn_ensemble, small_test_y, xlab = "Predicted Normalized Rank", 
+     ylab = "Actual Normalized Rank") +  title("LM+DNN2 Ensemble Actual vs. Predicted")
+rmse_lm_dnn_ensemble <- RMSE(pred_lm_dnn_ensemble, small_test_y)
+rmse_lm_dnn_ensemble
+```
+
+We get the following un-normalized RMSE:
+
+```{r}
+# Multiply by winPlacePerc standard deviation to un-normalize RMSE
+rmse_lm_dnn_ensemble * winPlacePerc_sd
+```
+
+This makes our prediction slightly worse than just using the neural network V2 alone.
+
+# Section 3: Results
+
+## 3.1: Test RMSES for All Models
+
+Here are the **un-normalized RMSES** for every model once again:
+
+```{r}
+# RMSE average model
+rmse_avg * winPlacePerc_sd
+# RMSE linear model
+rmse_lm1 * winPlacePerc_sd
+# RMSE pca model
+rmse_pca * winPlacePerc_sd
+# RMSE neuralnet v1
+rmse_dnn1 * winPlacePerc_sd
+# RMSE neuralnet v2
+rmse_dnn2 * winPlacePerc_sd
+# RMSE lm + neuralnet v2 ensemble
+rmse_lm_dnn_ensemble * winPlacePerc_sd
+
+```
+
+## 3.2: Plot and Comparison of Actual vs. Predicted winPlacePerc for Each Model
+
+We use the code below to generate a dataframe of actual vs. predicted winPlacePerc, with each column representing a model and each row representing a test set row. We generate a 40000 row random sample of this prediction dataframe to allow us to plot this without crashing R.
+
+``` {.R}
+winPlacePerc_sd <- train_sds[length(train_sds)]
+winPlacePerc_mean <- train_means[length(train_means)]
+
+# Create dataframe of all predictions, with a column for true values.
+test_pred_df <- tibble(actual = small_test_y*winPlacePerc_sd + winPlacePerc_mean, 
+                       avg = pred_avg*winPlacePerc_sd + winPlacePerc_mean,
+                       lm1 = pred_lm1*winPlacePerc_sd + winPlacePerc_mean,
+                       pca = pred_pca*winPlacePerc_sd + winPlacePerc_mean,
+                       dnn1 = pred_dnn1*winPlacePerc_sd + winPlacePerc_mean,
+                       dnn2 = pred_dnn2*winPlacePerc_sd + winPlacePerc_mean,
+                       ens = pred_lm_dnn_ensemble*winPlacePerc_sd + winPlacePerc_mean
+                       )
+head(test_pred_df)
+
+# Create a sample of 40000 rows so plotting is easy.
+test_pred_df_sample <- test_pred_df %>% sample_n(40000)
+```
+
+Here are the plots of each model's predictions vs. their actual values, colored by the magnitude of their error. A black color is achieved when prediction is close to the actual value. This is visible on each plot.
+
+```{r}
+## PLOTTING AVERAGE PREDS
+test_pred_df_sample %>% ggplot(aes(x=avg, y=actual)) +
+  geom_point(aes(color = abs(avg - actual)) ) + ggtitle("Average Model Actual vs. Pred")
+
+## PLOTTING LINEARMODEL PREDS
+test_pred_df_sample %>% ggplot(aes(x=lm1, y=actual)) +
+  geom_point(aes(color = abs(lm1 - actual)) ) + ggtitle("Linear Regression Model Actual vs. Pred")
+
+## PLOTTING PCA PREDS 
+test_pred_df_sample %>% ggplot(aes(x=pca, y=actual)) +
+  geom_point(aes(color = abs(pca - actual)) ) + ggtitle("PCA Model Actual vs. Pred")
+
+## PLOTTING DNN1 PREDS
+test_pred_df_sample %>% ggplot(aes(x=dnn1, y=actual)) +
+  geom_point(aes(color = abs(dnn1 - actual)) ) + ggtitle("Neuralnet V1 Model Actual vs. Pred")
+
+## PLOTTING DNN2 PREDS
+test_pred_df_sample %>% ggplot(aes(x=dnn2, y=actual)) +
+  geom_point(aes(color = abs(dnn2 - actual)) ) + ggtitle("Neuralnet V2 Model Actual vs. Pred")
+
+## PLOTTING ENSEMBLE PREDS
+test_pred_df_sample %>% ggplot(aes(x=ens, y=actual)) +
+  geom_point(aes(color = abs(ens - actual)) ) + ggtitle("Ensemble Model Actual vs. Pred")
+```
+
+### 3.2.1: Comments on Average Model
+
+The average model did a poor job at prediction (to be expected, since it's a baseline to beat). There's nothing to comment on as far as model trends.
+
+### 3.2.2: Comments on Linear Model
+
+The linear model did a decent job at prediction compared to average and PCA, but there's a branch of data being predicted incorrectly around the lower left corner of the prediction-actual plot. This is likely due to the linear model over-generalizing the effect of strong predictors like heals and boosts to lower-skilled players, where high usage of these items doesn't mean the player is skilled at the game or stands a good chance of outlasting other players.
+
+### 3.2.3: Comments on PCA Model
+
+The PCA model over-generalizes the effect of less-correlated variables and as a result often overpredicts or underpredicts a player's chances of survival. Heals, boosts and damage dealt are only part of the story. Individual variables are highly related to each other, and may not correlate directly with winPlacePerc by themselves. We saw examples of this during the exploratory data analysis earlier. PCA oversimplifies the data and ends up going far outside the range of possible predictions (0 to 1).
+
+### 3.2.4: Comments on Neural Network V1
+
+Neural Network V1 fits the data must more closely, showing a prediction-actual scatterplot akin to 2 variables highly correlated with each other. This shows the advantage of neural nets over simple linear models: neural nets can learn complex functions that fit the data's trends and effects on the predictor much more closely.
+
+The high batch size made training loss reduce relatively smoothly, and the high complexity of the network (while more computationally expensive to train per iteration) allowed the network to tightly fit around the training data. However, large layer sizes can lead to overfitting, so one must be cautious in not making the model so large that it cannot generalize to the test set.
+
+This neural network has better learned the limits of possible predictions (0 to 1).
+
+### 3.2.5: Comments on Neural Network V2
+
+It is believed the approach of neural network V2 is better than V1, since the network is small enough where overfitting is unlikely to be an issue. It's also easier to train this network due to the smaller number of tunable parameters present.
+
+The reduction of batch size from 8192 to 128 certainly slows training down, but allows for the network to learn how to cope with highly varied data and take into account more erroneous cases. Since the batch size was smaller, the chances of a large proportion of the batch being made up of outlier observations is greater. This makes training loss appear more unstable than V1's training loss, but also has the effect of discouraging the model from settling on a "good enough" configuration. It is recommended to store the model at every epoch and use the best one due to the variation in training accuracy from epoch to epoch.
+
+The prediction-actual plot of Neuralnet V2 shows a tight scatterplot fit, similar to Neuralnet V1's plot. The predictions also stay within the limits of 0 and 1 for the most part.
+
+### 3.2.6: Comments on NeuralNet + Linear Model Ensemble
+
+This model ends up being worse than the neural nets individually, and as such serves no purpose in this report. Ensemble predictions would probably work better with a categorical machine learning problem instead of linear regression.
+
+## 3.3: Final RMSE on Validation Set
+
+We end up choosing the **Neural Network V2** model as our **final model.** Here is the **final RMSE from validation set (un-normalized):**
+
+```{r}
+# Un-normalized final RMSE from neural network v2:
+final_rmse * winPlacePerc_sd
+```
+
+# Section 4: Conclusion
+
+In this report, we have delivered on the
